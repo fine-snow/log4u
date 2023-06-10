@@ -1,2 +1,2 @@
-# glog
+# log4u
 Logging Framework
