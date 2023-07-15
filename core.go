@@ -5,7 +5,6 @@ package log4u
 import (
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"runtime"
 	"time"
@@ -20,11 +19,120 @@ const (
 	OutLevel
 )
 
+const (
+	Ldate         = 1 << iota     // the date in the local time zone: 2009-01-23
+	Ltime                         // the time in the local time zone: 01:23:23
+	Lmicroseconds                 // microsecond resolution: 01:23:23.123123.  assumes Ltime.
+	Llongfile                     // full file name and line number: /a/b/c/d.go:23
+	Lshortfile                    // final file name element and line number: d.go:23. overrides Llongfile
+	LUTC                          // if Ldate or Ltime is set, use UTC rather than the local time zone
+	Lmsgprefix                    // move the "prefix" from the beginning of the line to before the message
+	LstdFlags     = Ldate | Ltime // initial values for the standard logger
+)
+
+type Logger struct {
+	prefix string
+	flag   int
+	out    io.Writer
+	buf    []byte
+}
+
+func newLogger(out io.Writer, prefix string, flag int) *Logger {
+	l := &Logger{out: out, prefix: prefix, flag: flag}
+	return l
+}
+
+func itoa(buf *[]byte, i int, wid int) {
+	// Assemble decimal in reverse order.
+	var b [20]byte
+	bp := len(b) - 1
+	for i >= 10 || wid > 1 {
+		wid--
+		q := i / 10
+		b[bp] = byte('0' + i - q*10)
+		bp--
+		i = q
+	}
+	// i < 10
+	b[bp] = byte('0' + i)
+	*buf = append(*buf, b[bp:]...)
+}
+
+func (l *Logger) formatHeader(buf *[]byte, t time.Time, file string, line int) {
+	if l.flag&Lmsgprefix == 0 {
+		*buf = append(*buf, l.prefix...)
+	}
+	if l.flag&(Ldate|Ltime|Lmicroseconds) != 0 {
+		if l.flag&LUTC != 0 {
+			t = t.UTC()
+		}
+		if l.flag&Ldate != 0 {
+			year, month, day := t.Date()
+			itoa(buf, year, 4)
+			*buf = append(*buf, '-')
+			itoa(buf, int(month), 2)
+			*buf = append(*buf, '-')
+			itoa(buf, day, 2)
+			*buf = append(*buf, ' ')
+		}
+		if l.flag&(Ltime|Lmicroseconds) != 0 {
+			hour, min, sec := t.Clock()
+			itoa(buf, hour, 2)
+			*buf = append(*buf, ':')
+			itoa(buf, min, 2)
+			*buf = append(*buf, ':')
+			itoa(buf, sec, 2)
+			if l.flag&Lmicroseconds != 0 {
+				*buf = append(*buf, '.')
+				itoa(buf, t.Nanosecond()/1e3, 6)
+			}
+			*buf = append(*buf, ' ')
+		}
+	}
+	if l.flag&(Lshortfile|Llongfile) != 0 {
+		if l.flag&Lshortfile != 0 {
+			short := file
+			for i := len(file) - 1; i > 0; i-- {
+				if file[i] == '/' {
+					short = file[i+1:]
+					break
+				}
+			}
+			file = short
+		}
+		*buf = append(*buf, file...)
+		*buf = append(*buf, ':')
+		itoa(buf, line, -1)
+		*buf = append(*buf, ": "...)
+	}
+	if l.flag&Lmsgprefix != 0 {
+		*buf = append(*buf, l.prefix...)
+	}
+}
+
+func (l *Logger) Output(s, file string, line int) {
+	now := time.Now() // get this early.
+	if l.flag&(Lshortfile|Llongfile) == 0 {
+		file = ""
+		line = 0
+	}
+	l.buf = l.buf[:0]
+	l.formatHeader(&l.buf, now, file, line)
+	l.buf = append(l.buf, s...)
+	if len(s) == 0 || s[len(s)-1] != '\n' {
+		l.buf = append(l.buf, '\n')
+	}
+	_, err := l.out.Write(l.buf)
+	if err != nil {
+		panic(err)
+	}
+}
+
 var (
-	outLog   *log.Logger = nil
-	infoLog  *log.Logger = nil
-	warnLog  *log.Logger = nil
-	errorLog *log.Logger = nil
+	outLog   *Logger = nil
+	infoLog  *Logger = nil
+	warnLog  *Logger = nil
+	errorLog *Logger = nil
 )
 
 func init() {
@@ -33,16 +141,13 @@ func init() {
 		_ = os.Mkdir("log", 0777)
 	}
 	infoFile, err := os.OpenFile("./log/info.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	if err != nil {
-		panic(err)
-	}
 	warnFile, _ := os.OpenFile("./log/warn.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	errorFile, _ := os.OpenFile("./log/error.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 
-	outLog = log.New(io.MultiWriter(infoFile, os.Stdout), "", 0)
-	infoLog = log.New(io.MultiWriter(infoFile, os.Stdout), "\u001B[34mINFO\u001B[0m ", log.LstdFlags|log.Lmsgprefix|log.Llongfile)
-	warnLog = log.New(io.MultiWriter(warnFile, os.Stdout), "\u001B[33mWARN\u001B[0m ", log.LstdFlags|log.Lmsgprefix|log.Llongfile)
-	errorLog = log.New(io.MultiWriter(errorFile, os.Stdout), "\u001B[31mERROR\u001B[0m ", log.LstdFlags|log.Lmsgprefix)
+	outLog = newLogger(io.MultiWriter(infoFile, os.Stdout), "", 0)
+	infoLog = newLogger(io.MultiWriter(infoFile, os.Stdout), "\u001B[34mINFO\u001B[0m ", LstdFlags|Lmsgprefix|Lshortfile)
+	warnLog = newLogger(io.MultiWriter(warnFile, os.Stdout), "\u001B[33mWARN\u001B[0m ", LstdFlags|Lmsgprefix|Lshortfile)
+	errorLog = newLogger(io.MultiWriter(errorFile, os.Stdout), "\u001B[31mERROR\u001B[0m ", LstdFlags|Lmsgprefix|Lshortfile)
 
 	globalLog4u = &Log4u{o: outLog, i: infoLog, w: warnLog, e: errorLog, level: OutLevel, c: make(chan *logInfo, 100)}
 	go globalLog4u.outLog()
@@ -50,21 +155,23 @@ func init() {
 
 type logInfo struct {
 	level LogLevel
+	line  int
+	file  string
 	val   *string
 }
 
 var globalLog4u *Log4u = nil
 
 type Log4u struct {
-	o     *log.Logger
-	i     *log.Logger
-	w     *log.Logger
-	e     *log.Logger
+	o     *Logger
+	i     *Logger
+	w     *Logger
+	e     *Logger
 	level LogLevel
 	c     chan *logInfo
 }
 
-func New() *Log4u {
+func Inject() *Log4u {
 	return globalLog4u
 }
 
@@ -75,6 +182,18 @@ func SetLevel(level LogLevel) {
 	default:
 		globalLog4u.level = OutLevel
 	}
+}
+
+func getFileAndLine() (string, int) {
+	var file string
+	var line int
+	var ok bool
+	_, file, line, ok = runtime.Caller(2)
+	if !ok {
+		file = "???"
+		line = 0
+	}
+	return file, line
 }
 
 func Wait() {
@@ -88,18 +207,26 @@ func Wait() {
 	}
 }
 
+func (l *Log4u) errCatch() {
+	err := recover()
+	if err != nil {
+		os.Exit(1)
+	}
+}
+
 func (l *Log4u) outLog() {
+	defer l.errCatch()
 	for {
 		info := <-l.c
 		switch info.level {
 		case OutLevel:
-			_ = l.o.Output(2, *info.val)
+			l.o.Output(*info.val, info.file, info.line)
 		case InfoLevel:
-			_ = l.i.Output(2, *info.val)
+			l.i.Output(*info.val, info.file, info.line)
 		case WarnLevel:
-			_ = l.w.Output(2, *info.val)
+			l.w.Output(*info.val, info.file, info.line)
 		case ErrorLevel:
-			_ = l.e.Output(2, *info.val)
+			l.e.Output(*info.val, info.file, info.line)
 		default:
 		}
 	}
@@ -118,7 +245,8 @@ func (l *Log4u) INFO(v ...any) {
 		return
 	}
 	str := fmt.Sprintln(v...)
-	l.c <- &logInfo{level: InfoLevel, val: &str}
+	file, line := getFileAndLine()
+	l.c <- &logInfo{level: InfoLevel, line: line, file: file, val: &str}
 }
 
 func (l *Log4u) INFOF(format string, v ...any) {
@@ -126,7 +254,8 @@ func (l *Log4u) INFOF(format string, v ...any) {
 		return
 	}
 	str := fmt.Sprintf(format, v...)
-	l.c <- &logInfo{level: InfoLevel, val: &str}
+	file, line := getFileAndLine()
+	l.c <- &logInfo{level: InfoLevel, line: line, file: file, val: &str}
 }
 
 func (l *Log4u) WARN(v ...any) {
@@ -134,7 +263,8 @@ func (l *Log4u) WARN(v ...any) {
 		return
 	}
 	str := fmt.Sprintln(v...)
-	l.c <- &logInfo{level: WarnLevel, val: &str}
+	file, line := getFileAndLine()
+	l.c <- &logInfo{level: WarnLevel, line: line, file: file, val: &str}
 }
 
 func (l *Log4u) WARNF(format string, v ...any) {
@@ -142,19 +272,20 @@ func (l *Log4u) WARNF(format string, v ...any) {
 		return
 	}
 	str := fmt.Sprintf(format, v...)
-	l.c <- &logInfo{level: WarnLevel, val: &str}
+	file, line := getFileAndLine()
+	l.c <- &logInfo{level: WarnLevel, line: line, file: file, val: &str}
 }
 
 func (l *Log4u) ERROR(v ...any) {
 	str := fmt.Sprintln(v...)
-	_, file, _, _ := runtime.Caller(2)
-	fmt.Println(file)
-	l.c <- &logInfo{level: ErrorLevel, val: &str}
+	file, line := getFileAndLine()
+	l.c <- &logInfo{level: ErrorLevel, line: line, file: file, val: &str}
 }
 
 func (l *Log4u) ERRORF(format string, v ...any) {
 	str := fmt.Sprintf(format, v...)
-	l.c <- &logInfo{level: ErrorLevel, val: &str}
+	file, line := getFileAndLine()
+	l.c <- &logInfo{level: ErrorLevel, line: line, file: file, val: &str}
 }
 
 func OUT(v ...any) {
@@ -170,7 +301,8 @@ func INFO(v ...any) {
 		return
 	}
 	str := fmt.Sprintln(v...)
-	globalLog4u.c <- &logInfo{level: InfoLevel, val: &str}
+	file, line := getFileAndLine()
+	globalLog4u.c <- &logInfo{level: InfoLevel, line: line, file: file, val: &str}
 }
 
 func INFOF(format string, v ...any) {
@@ -178,7 +310,8 @@ func INFOF(format string, v ...any) {
 		return
 	}
 	str := fmt.Sprintf(format, v...)
-	globalLog4u.c <- &logInfo{level: InfoLevel, val: &str}
+	file, line := getFileAndLine()
+	globalLog4u.c <- &logInfo{level: InfoLevel, line: line, file: file, val: &str}
 }
 
 func WARN(v ...any) {
@@ -186,7 +319,8 @@ func WARN(v ...any) {
 		return
 	}
 	str := fmt.Sprintln(v...)
-	globalLog4u.c <- &logInfo{level: WarnLevel, val: &str}
+	file, line := getFileAndLine()
+	globalLog4u.c <- &logInfo{level: WarnLevel, line: line, file: file, val: &str}
 }
 
 func WARNF(format string, v ...any) {
@@ -194,15 +328,18 @@ func WARNF(format string, v ...any) {
 		return
 	}
 	str := fmt.Sprintf(format, v...)
-	globalLog4u.c <- &logInfo{level: WarnLevel, val: &str}
+	file, line := getFileAndLine()
+	globalLog4u.c <- &logInfo{level: WarnLevel, line: line, file: file, val: &str}
 }
 
 func ERROR(v ...any) {
 	str := fmt.Sprintln(v...)
-	globalLog4u.c <- &logInfo{level: ErrorLevel, val: &str}
+	file, line := getFileAndLine()
+	globalLog4u.c <- &logInfo{level: ErrorLevel, line: line, file: file, val: &str}
 }
 
 func ERRORF(format string, v ...any) {
 	str := fmt.Sprintf(format, v...)
-	globalLog4u.c <- &logInfo{level: ErrorLevel, val: &str}
+	file, line := getFileAndLine()
+	globalLog4u.c <- &logInfo{level: ErrorLevel, line: line, file: file, val: &str}
 }
