@@ -7,6 +7,9 @@ import (
 	"io"
 	"os"
 	"runtime"
+	"runtime/debug"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -111,11 +114,8 @@ func (l *Logger) formatHeader(buf *[]byte, t time.Time, file string, line int) {
 }
 
 func (l *Logger) Output(s, file string, line int) {
-	now := time.Now() // get this early.
-	if l.flag&(Lshortfile|Llongfile) == 0 {
-		file = ""
-		line = 0
-	}
+	// get this early
+	now := time.Now()
 	l.buf = l.buf[:0]
 	l.formatHeader(&l.buf, now, file, line)
 	l.buf = append(l.buf, s...)
@@ -184,16 +184,38 @@ func SetLevel(level LogLevel) {
 	}
 }
 
-func getFileAndLine() (string, int) {
+func getFileAndLine(depth int) (string, int) {
 	var file string
 	var line int
 	var ok bool
-	_, file, line, ok = runtime.Caller(2)
+	_, file, line, ok = runtime.Caller(depth + 1)
 	if !ok {
 		file = "???"
 		line = 0
 	}
 	return file, line
+}
+
+func getFileAndLineByStack(depth int) (string, int) {
+	str := string(debug.Stack())
+	strArr := strings.Split(str, "\n")
+	var target string
+	for i, v := range strArr {
+		if strings.Contains(v, "runtime/panic.go") {
+			target = strings.Split(strings.TrimSpace(strArr[i+2]), " ")[0]
+			break
+		}
+	}
+	if target == "" {
+		return getFileAndLine(depth + 1)
+	}
+	arr := strings.Split(target, ":")
+	if len(arr) == 2 {
+		line, _ := strconv.ParseInt(arr[1], 0, 64)
+		return arr[0], int(line)
+	}
+	line, _ := strconv.ParseInt(arr[2], 0, 64)
+	return strings.Join(arr[:2], ":"), int(line)
 }
 
 func Wait() {
@@ -245,7 +267,7 @@ func (l *Log4u) INFO(v ...any) {
 		return
 	}
 	str := fmt.Sprintln(v...)
-	file, line := getFileAndLine()
+	file, line := getFileAndLine(1)
 	l.c <- &logInfo{level: InfoLevel, line: line, file: file, val: &str}
 }
 
@@ -254,7 +276,7 @@ func (l *Log4u) INFOF(format string, v ...any) {
 		return
 	}
 	str := fmt.Sprintf(format, v...)
-	file, line := getFileAndLine()
+	file, line := getFileAndLine(1)
 	l.c <- &logInfo{level: InfoLevel, line: line, file: file, val: &str}
 }
 
@@ -263,7 +285,7 @@ func (l *Log4u) WARN(v ...any) {
 		return
 	}
 	str := fmt.Sprintln(v...)
-	file, line := getFileAndLine()
+	file, line := getFileAndLine(1)
 	l.c <- &logInfo{level: WarnLevel, line: line, file: file, val: &str}
 }
 
@@ -272,19 +294,19 @@ func (l *Log4u) WARNF(format string, v ...any) {
 		return
 	}
 	str := fmt.Sprintf(format, v...)
-	file, line := getFileAndLine()
+	file, line := getFileAndLine(1)
 	l.c <- &logInfo{level: WarnLevel, line: line, file: file, val: &str}
 }
 
 func (l *Log4u) ERROR(v ...any) {
 	str := fmt.Sprintln(v...)
-	file, line := getFileAndLine()
+	file, line := getFileAndLineByStack(1)
 	l.c <- &logInfo{level: ErrorLevel, line: line, file: file, val: &str}
 }
 
 func (l *Log4u) ERRORF(format string, v ...any) {
 	str := fmt.Sprintf(format, v...)
-	file, line := getFileAndLine()
+	file, line := getFileAndLineByStack(1)
 	l.c <- &logInfo{level: ErrorLevel, line: line, file: file, val: &str}
 }
 
@@ -301,7 +323,7 @@ func INFO(v ...any) {
 		return
 	}
 	str := fmt.Sprintln(v...)
-	file, line := getFileAndLine()
+	file, line := getFileAndLine(1)
 	globalLog4u.c <- &logInfo{level: InfoLevel, line: line, file: file, val: &str}
 }
 
@@ -310,7 +332,7 @@ func INFOF(format string, v ...any) {
 		return
 	}
 	str := fmt.Sprintf(format, v...)
-	file, line := getFileAndLine()
+	file, line := getFileAndLine(1)
 	globalLog4u.c <- &logInfo{level: InfoLevel, line: line, file: file, val: &str}
 }
 
@@ -319,7 +341,7 @@ func WARN(v ...any) {
 		return
 	}
 	str := fmt.Sprintln(v...)
-	file, line := getFileAndLine()
+	file, line := getFileAndLine(1)
 	globalLog4u.c <- &logInfo{level: WarnLevel, line: line, file: file, val: &str}
 }
 
@@ -328,18 +350,18 @@ func WARNF(format string, v ...any) {
 		return
 	}
 	str := fmt.Sprintf(format, v...)
-	file, line := getFileAndLine()
+	file, line := getFileAndLine(1)
 	globalLog4u.c <- &logInfo{level: WarnLevel, line: line, file: file, val: &str}
 }
 
 func ERROR(v ...any) {
 	str := fmt.Sprintln(v...)
-	file, line := getFileAndLine()
+	file, line := getFileAndLineByStack(1)
 	globalLog4u.c <- &logInfo{level: ErrorLevel, line: line, file: file, val: &str}
 }
 
 func ERRORF(format string, v ...any) {
 	str := fmt.Sprintf(format, v...)
-	file, line := getFileAndLine()
+	file, line := getFileAndLineByStack(1)
 	globalLog4u.c <- &logInfo{level: ErrorLevel, line: line, file: file, val: &str}
 }
