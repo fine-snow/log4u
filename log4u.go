@@ -3,13 +3,13 @@
 package log4u
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
 	"runtime"
 	"runtime/debug"
 	"strconv"
-	"strings"
 	"time"
 )
 
@@ -196,26 +196,27 @@ func getFileAndLine(depth int) (string, int) {
 	return file, line
 }
 
+var panicBytes = []byte("/src/runtime/panic.go")
+var otherBytes = []byte(")\n\t")
+
 func getFileAndLineByStack(depth int) (string, int) {
-	str := string(debug.Stack())
-	strArr := strings.Split(str, "\n")
-	var target string
-	for i, v := range strArr {
-		if strings.Contains(v, "runtime/panic.go") {
-			target = strings.Split(strings.TrimSpace(strArr[i+2]), " ")[0]
-			break
-		}
-	}
-	if target == "" {
+
+	stack := debug.Stack()
+	index := bytes.Index(stack, panicBytes)
+	if index == -1 {
 		return getFileAndLine(depth + 1)
 	}
-	arr := strings.Split(target, ":")
-	if len(arr) == 2 {
-		line, _ := strconv.ParseInt(arr[1], 0, 64)
-		return arr[0], int(line)
-	}
-	line, _ := strconv.ParseInt(arr[2], 0, 64)
-	return strings.Join(arr[:2], ":"), int(line)
+
+	stack = stack[index:]
+	index = bytes.Index(stack, otherBytes)
+	stack = stack[index:]
+	stack = stack[3:]
+	index = bytes.IndexByte(stack, ' ')
+	stack = stack[:index]
+	index = bytes.LastIndexByte(stack, ':')
+
+	line, _ := strconv.ParseInt(string(stack[index+1:]), 0, 64)
+	return string(stack[:index]), int(line)
 }
 
 func Wait() {
@@ -267,7 +268,7 @@ func (l *Log4u) INFO(v ...any) {
 		return
 	}
 	str := fmt.Sprintln(v...)
-	file, line := getFileAndLine(1)
+	file, line := getFileAndLineByStack(1)
 	l.c <- &logInfo{level: InfoLevel, line: line, file: file, val: &str}
 }
 
@@ -276,7 +277,7 @@ func (l *Log4u) INFOF(format string, v ...any) {
 		return
 	}
 	str := fmt.Sprintf(format, v...)
-	file, line := getFileAndLine(1)
+	file, line := getFileAndLineByStack(1)
 	l.c <- &logInfo{level: InfoLevel, line: line, file: file, val: &str}
 }
 
@@ -285,7 +286,7 @@ func (l *Log4u) WARN(v ...any) {
 		return
 	}
 	str := fmt.Sprintln(v...)
-	file, line := getFileAndLine(1)
+	file, line := getFileAndLineByStack(1)
 	l.c <- &logInfo{level: WarnLevel, line: line, file: file, val: &str}
 }
 
@@ -294,7 +295,7 @@ func (l *Log4u) WARNF(format string, v ...any) {
 		return
 	}
 	str := fmt.Sprintf(format, v...)
-	file, line := getFileAndLine(1)
+	file, line := getFileAndLineByStack(1)
 	l.c <- &logInfo{level: WarnLevel, line: line, file: file, val: &str}
 }
 
@@ -323,7 +324,7 @@ func INFO(v ...any) {
 		return
 	}
 	str := fmt.Sprintln(v...)
-	file, line := getFileAndLine(1)
+	file, line := getFileAndLineByStack(1)
 	globalLog4u.c <- &logInfo{level: InfoLevel, line: line, file: file, val: &str}
 }
 
@@ -332,7 +333,7 @@ func INFOF(format string, v ...any) {
 		return
 	}
 	str := fmt.Sprintf(format, v...)
-	file, line := getFileAndLine(1)
+	file, line := getFileAndLineByStack(1)
 	globalLog4u.c <- &logInfo{level: InfoLevel, line: line, file: file, val: &str}
 }
 
@@ -341,7 +342,7 @@ func WARN(v ...any) {
 		return
 	}
 	str := fmt.Sprintln(v...)
-	file, line := getFileAndLine(1)
+	file, line := getFileAndLineByStack(1)
 	globalLog4u.c <- &logInfo{level: WarnLevel, line: line, file: file, val: &str}
 }
 
@@ -350,7 +351,7 @@ func WARNF(format string, v ...any) {
 		return
 	}
 	str := fmt.Sprintf(format, v...)
-	file, line := getFileAndLine(1)
+	file, line := getFileAndLineByStack(1)
 	globalLog4u.c <- &logInfo{level: WarnLevel, line: line, file: file, val: &str}
 }
 
