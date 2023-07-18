@@ -13,6 +13,7 @@ import (
 	"time"
 )
 
+// LogLevel Log level parameter type
 type LogLevel uint8
 
 const (
