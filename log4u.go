@@ -141,16 +141,14 @@ func init() {
 	if err != nil {
 		_ = os.Mkdir("log", 0777)
 	}
-	infoFile, err := os.OpenFile("./log/info.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	warnFile, _ := os.OpenFile("./log/warn.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	errorFile, _ := os.OpenFile("./log/error.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	logFile, _ := os.OpenFile("./log/log4u.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 
-	outLog = newLogger(io.MultiWriter(infoFile, os.Stdout), "", 0)
-	infoLog = newLogger(io.MultiWriter(infoFile, os.Stdout), "\u001B[34mINFO\u001B[0m ", LstdFlags|Lmsgprefix|Lshortfile)
-	warnLog = newLogger(io.MultiWriter(warnFile, os.Stdout), "\u001B[33mWARN\u001B[0m ", LstdFlags|Lmsgprefix|Lshortfile)
-	errorLog = newLogger(io.MultiWriter(errorFile, os.Stdout), "\u001B[31mERROR\u001B[0m ", LstdFlags|Lmsgprefix|Lshortfile)
+	outLog = newLogger(io.MultiWriter(logFile, os.Stdout), "", 0)
+	infoLog = newLogger(io.MultiWriter(logFile, os.Stdout), "\u001B[34mINFO\u001B[0m ", LstdFlags|Lmsgprefix|Lshortfile)
+	warnLog = newLogger(io.MultiWriter(logFile, os.Stdout), "\u001B[33mWARN\u001B[0m ", LstdFlags|Lmsgprefix|Lshortfile)
+	errorLog = newLogger(io.MultiWriter(logFile, os.Stdout), "\u001B[31mERROR\u001B[0m ", LstdFlags|Lmsgprefix|Lshortfile)
 
-	globalLog4u = &Log4u{o: outLog, i: infoLog, w: warnLog, e: errorLog, level: OutLevel, c: make(chan *logInfo, 100)}
+	globalLog4u = &Log4u{o: outLog, i: infoLog, w: warnLog, e: errorLog, level: OutLevel, c: make(chan *logInfo, 200)}
 	go globalLog4u.outLog()
 }
 
