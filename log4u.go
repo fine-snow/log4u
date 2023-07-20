@@ -20,6 +20,7 @@ const (
 	ErrorLevel LogLevel = iota
 	WarnLevel
 	InfoLevel
+	DebugLevel
 	OutLevel
 )
 
@@ -129,13 +130,6 @@ func (l *Logger) Output(s, file string, line int) {
 	}
 }
 
-var (
-	outLog   *Logger = nil
-	infoLog  *Logger = nil
-	warnLog  *Logger = nil
-	errorLog *Logger = nil
-)
-
 func init() {
 	_, err := os.Stat("./log")
 	if err != nil {
@@ -143,12 +137,13 @@ func init() {
 	}
 	logFile, _ := os.OpenFile("./log/log4u.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 
-	outLog = newLogger(io.MultiWriter(logFile, os.Stdout), "", 0)
-	infoLog = newLogger(io.MultiWriter(logFile, os.Stdout), "\u001B[34mINFO\u001B[0m ", LstdFlags|Lmsgprefix|Lshortfile)
-	warnLog = newLogger(io.MultiWriter(logFile, os.Stdout), "\u001B[33mWARN\u001B[0m ", LstdFlags|Lmsgprefix|Lshortfile)
-	errorLog = newLogger(io.MultiWriter(logFile, os.Stdout), "\u001B[31mERROR\u001B[0m ", LstdFlags|Lmsgprefix|Lshortfile)
+	outLog := newLogger(io.MultiWriter(logFile, os.Stdout), "", 0)
+	debugLog := newLogger(io.MultiWriter(logFile, os.Stdout), "\u001B[32mDEBUG\u001B[0m ", LstdFlags|Lmsgprefix|Lshortfile)
+	infoLog := newLogger(io.MultiWriter(logFile, os.Stdout), "\u001B[34mINFO\u001B[0m ", LstdFlags|Lmsgprefix|Lshortfile)
+	warnLog := newLogger(io.MultiWriter(logFile, os.Stdout), "\u001B[33mWARN\u001B[0m ", LstdFlags|Lmsgprefix|Lshortfile)
+	errorLog := newLogger(io.MultiWriter(logFile, os.Stdout), "\u001B[31mERROR\u001B[0m ", LstdFlags|Lmsgprefix|Lshortfile)
 
-	globalLog4u = &Log4u{o: outLog, i: infoLog, w: warnLog, e: errorLog, level: OutLevel, c: make(chan *logInfo, 200)}
+	globalLog4u = &Log4u{o: outLog, i: infoLog, d: debugLog, w: warnLog, e: errorLog, level: DebugLevel, c: make(chan *logInfo, 200)}
 	go globalLog4u.outLog()
 }
 
@@ -163,6 +158,7 @@ var globalLog4u *Log4u = nil
 
 type Log4u struct {
 	o     *Logger
+	d     *Logger
 	i     *Logger
 	w     *Logger
 	e     *Logger
@@ -176,10 +172,10 @@ func Inject() *Log4u {
 
 func SetLevel(level LogLevel) {
 	switch level {
-	case OutLevel, InfoLevel, WarnLevel, ErrorLevel:
+	case DebugLevel, InfoLevel, WarnLevel, ErrorLevel:
 		globalLog4u.level = level
 	default:
-		globalLog4u.level = OutLevel
+		globalLog4u.level = DebugLevel
 	}
 }
 
@@ -243,6 +239,8 @@ func (l *Log4u) outLog() {
 		switch info.level {
 		case OutLevel:
 			l.o.Output(*info.val, info.file, info.line)
+		case DebugLevel:
+			l.d.Output(*info.val, info.file, info.line)
 		case InfoLevel:
 			l.i.Output(*info.val, info.file, info.line)
 		case WarnLevel:
@@ -255,11 +253,26 @@ func (l *Log4u) outLog() {
 }
 
 func (l *Log4u) OUT(v ...any) {
-	if l.level < OutLevel {
+	str := fmt.Sprintln(v...)
+	l.c <- &logInfo{level: OutLevel, val: &str}
+}
+
+func (l *Log4u) DEBUG(v ...any) {
+	if l.level < DebugLevel {
 		return
 	}
 	str := fmt.Sprintln(v...)
-	l.c <- &logInfo{level: OutLevel, val: &str}
+	file, line := getFileAndLineByStack(1)
+	l.c <- &logInfo{level: DebugLevel, line: line, file: file, val: &str}
+}
+
+func (l *Log4u) DEBUGF(format string, v ...any) {
+	if l.level < DebugLevel {
+		return
+	}
+	str := fmt.Sprintf(format, v...)
+	file, line := getFileAndLineByStack(1)
+	l.c <- &logInfo{level: DebugLevel, line: line, file: file, val: &str}
 }
 
 func (l *Log4u) INFO(v ...any) {
@@ -311,11 +324,26 @@ func (l *Log4u) ERRORF(format string, v ...any) {
 }
 
 func OUT(v ...any) {
-	if globalLog4u.level < OutLevel {
+	str := fmt.Sprintln(v...)
+	globalLog4u.c <- &logInfo{level: OutLevel, val: &str}
+}
+
+func DEBUG(v ...any) {
+	if globalLog4u.level < DebugLevel {
 		return
 	}
 	str := fmt.Sprintln(v...)
-	globalLog4u.c <- &logInfo{level: OutLevel, val: &str}
+	file, line := getFileAndLineByStack(1)
+	globalLog4u.c <- &logInfo{level: DebugLevel, line: line, file: file, val: &str}
+}
+
+func DEBUGF(format string, v ...any) {
+	if globalLog4u.level < DebugLevel {
+		return
+	}
+	str := fmt.Sprintf(format, v...)
+	file, line := getFileAndLineByStack(1)
+	globalLog4u.c <- &logInfo{level: DebugLevel, line: line, file: file, val: &str}
 }
 
 func INFO(v ...any) {
